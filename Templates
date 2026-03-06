@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DeepScan — Real vs Deepfake Detector</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080c12;
+      --surface: #0e1420;
+      --surface2: #141c2a;
+      --border: rgba(255,255,255,0.07);
+      --accent: #00e5ff;
+      --accent2: #ff3c6e;
+      --accent3: #a259ff;
+      --text: #e8eef8;
+      --muted: #6a7a94;
+      --real: #00e5a0;
+      --fake: #ff3c6e;
+      --glow-real: rgba(0,229,160,0.25);
+      --glow-fake: rgba(255,60,110,0.25);
+      --glow-accent: rgba(0,229,255,0.15);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Space Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+      cursor: none;
+    }
+
+    /* Custom cursor */
+    .cursor {
+      position: fixed;
+      width: 12px; height: 12px;
+      background: var(--accent);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9999;
+      transform: translate(-50%, -50%);
+      transition: transform 0.1s, opacity 0.2s;
+      mix-blend-mode: screen;
+    }
+    .cursor-ring {
+      position: fixed;
+      width: 36px; height: 36px;
+      border: 1.5px solid var(--accent);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9998;
+      transform: translate(-50%, -50%);
+      transition: transform 0.18s ease, width 0.2s, height 0.2s, opacity 0.2s;
+      opacity: 0.5;
+    }
+
+    /* Animated grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      animation: gridMove 20s linear infinite;
+      z-index: 0;
+      pointer-events: none;
+    }
+    @keyframes gridMove {
+      0% { background-position: 0 0; }
+      100% { background-position: 48px 48px; }
+    }
+
+    /* Noise texture overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.4;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky; top: 0;
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      background: rgba(8,12,18,0.8);
+      z-index: 100;
+      padding: 0 24px;
+    }
+    .nav-inner {
+      max-width: 960px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 60px;
+    }
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 1.3rem;
+      letter-spacing: -0.02em;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .logo-icon {
+      width: 30px; height: 30px;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+      animation: logoPulse 3s ease-in-out infinite;
+    }
+    .logo-icon::after {
+      content: '';
+      position: absolute;
+      inset: 3px;
+      background: var(--accent);
+      border-radius: 4px;
+      opacity: 0.3;
+    }
+    @keyframes logoPulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,0.4); }
+      50% { box-shadow: 0 0 0 8px rgba(0,229,255,0); }
+    }
+    .logo span { color: var(--accent); }
+    .nav-badge {
+      font-size: 0.68rem;
+      background: rgba(0,229,255,0.1);
+      color: var(--accent);
+      border: 1px solid rgba(0,229,255,0.2);
+      padding: 3px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.08em;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 80px 0 60px;
+      text-align: center;
+      position: relative;
+    }
+    .hero-eyebrow {
+      font-size: 0.72rem;
+      letter-spacing: 0.25em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.1s forwards;
+    }
+    .hero-title {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(2.5rem, 7vw, 5rem);
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+      margin-bottom: 20px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.2s forwards;
+    }
+    .hero-title .line2 { color: var(--accent); display: block; }
+    .hero-sub {
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.7;
+      max-width: 500px;
+      margin: 0 auto 48px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.3s forwards;
+    }
+    .hero-stats {
+      display: flex; justify-content: center; gap: 48px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.4s forwards;
+      margin-bottom: 60px;
+    }
+    .stat { text-align: center; }
+    .stat-num {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--accent);
+      display: block;
+    }
+    .stat-label { font-size: 0.68rem; color: var(--muted); letter-spacing: 0.1em; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── SCANNER CARD ── */
+    .scanner-wrap {
+      opacity: 0;
+      animation: fadeUp 0.7s ease 0.5s forwards;
+    }
+    .scanner-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      overflow: hidden;
+      position: relative;
+    }
+    .scanner-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.6;
+    }
+
+    /* Drop Zone */
+    .drop-zone {
+      margin: 32px;
+      border: 2px dashed rgba(0,229,255,0.2);
+      border-radius: 18px;
+      padding: 56px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      background: rgba(0,229,255,0.02);
+    }
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: rgba(0,229,255,0.5);
+      background: rgba(0,229,255,0.05);
+    }
+    .drop-zone.drag-over { transform: scale(1.01); }
+    .drop-zone input { display: none; }
+
+    .dz-icon {
+      width: 72px; height: 72px;
+      border: 1.5px solid rgba(0,229,255,0.2);
+      border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2rem;
+      position: relative;
+      transition: all 0.3s;
+      background: rgba(0,229,255,0.04);
+    }
+    .drop-zone:hover .dz-icon {
+      border-color: var(--accent);
+      background: rgba(0,229,255,0.1);
+      box-shadow: 0 0 24px var(--glow-accent);
+    }
+    .dz-corner {
+      position: absolute; width: 12px; height: 12px;
+      border-color: var(--accent); border-style: solid;
+    }
+    .dz-corner.tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; border-radius: 4px 0 0 0; }
+    .dz-corner.tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; border-radius: 0 4px 0 0; }
+    .dz-corner.bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; border-radius: 0 0 0 4px; }
+    .dz-corner.br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; border-radius: 0 0 4px 0; }
+
+    .dz-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    .dz-sub { font-size: 0.78rem; color: var(--muted); text-align: center; line-height: 1.6; }
+    .dz-formats {
+      display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+    }
+    .dz-fmt {
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      border: 1px solid var(--border);
+      padding: 3px 10px;
+      border-radius: 999px;
+      color: var(--muted);
+    }
+
+    /* Preview section */
+    .preview-section {
+      display: none;
+      margin: 0 32px 32px;
+      gap: 24px;
+      flex-direction: column;
+    }
+    .preview-section.visible { display: flex; }
+
+    .preview-header {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .preview-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .btn-reset {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.7rem;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 4px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-reset:hover { border-color: var(--accent2); color: var(--accent2); }
+
+    .preview-frame {
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      position: relative;
+      background: #000;
+      max-height: 360px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .preview-frame img {
+      max-width: 100%;
+      max-height: 360px;
+      object-fit: contain;
+      display: block;
+    }
+    .scan-overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(8,12,18,0.75);
+      backdrop-filter: blur(2px);
+    }
+    .scan-overlay.active { display: flex; }
+    .scan-bar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: scanDown 1.8s ease-in-out infinite;
+      box-shadow: 0 0 12px var(--accent);
+    }
+    @keyframes scanDown {
+      0%   { top: 0; opacity: 1; }
+      100% { top: 100%; opacity: 0.3; }
+    }
+    .scan-text {
+      font-size: 0.75rem;
+      color: var(--accent);
+      letter-spacing: 0.2em;
+      animation: blink 1s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* Analyze button */
+    .btn-analyze {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.95rem;
+      letter-spacing: 0.04em;
+      background: var(--accent);
+      color: #080c12;
+      border: none;
+      border-radius: 14px;
+      padding: 16px 32px;
+      width: 100%;
+      cursor: pointer;
+      transition: all 0.25s;
+      position: relative;
+      overflow: hidden;
+    }
+    .btn-analyze::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.15) 50%, transparent 100%);
+      transform: translateX(-100%);
+      transition: transform 0.5s;
+    }
+    .btn-analyze:hover::after { transform: translateX(100%); }
+    .btn-analyze:hover {
+      box-shadow: 0 0 32px rgba(0,229,255,0.4);
+      transform: translateY(-1px);
+    }
+    .btn-analyze:active { transform: translateY(0); }
+    .btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    /* ── RESULT PANEL ── */
+    .result-panel {
+      display: none;
+      margin: 0 32px 32px;
+    }
+    .result-panel.visible { display: block; }
+
+    .result-card {
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.4s ease;
+    }
+    .result-card.real {
+      border-color: rgba(0,229,160,0.3);
+      background: linear-gradient(135deg, rgba(0,229,160,0.06) 0%, rgba(14,20,32,0) 60%);
+      box-shadow: inset 0 1px 0 rgba(0,229,160,0.15), 0 0 40px rgba(0,229,160,0.05);
+    }
+    .result-card.fake {
+      border-color: rgba(255,60,110,0.3);
+      background: linear-gradient(135deg, rgba(255,60,110,0.06) 0%, rgba(14,20,32,0) 60%);
+      box-shadow: inset 0 1px 0 rgba(255,60,110,0.15), 0 0 40px rgba(255,60,110,0.05);
+    }
+
+    .result-top {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      margin-bottom: 24px; gap: 16px;
+    }
+    .result-verdict {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .verdict-icon {
+      width: 52px; height: 52px;
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.6rem;
+      flex-shrink: 0;
+    }
+    .real .verdict-icon { background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.25); }
+    .fake .verdict-icon { background: rgba(255,60,110,0.1); border: 1px solid rgba(255,60,110,0.25); }
+
+    .verdict-label { font-size: 0.65rem; color: var(--muted); letter-spacing: 0.15em; margin-bottom: 4px; }
+    .verdict-text {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+    .real .verdict-text { color: var(--real); }
+    .fake .verdict-text { color: var(--fake); }
+
+    .confidence-badge {
+      font-family: 'Syne', sans-serif;
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      padding: 12px 20px;
+      border-radius: 14px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .real .confidence-badge { color: var(--real); background: rgba(0,229,160,0.08); }
+    .fake .confidence-badge { color: var(--fake); background: rgba(255,60,110,0.08); }
+    .confidence-badge span { font-size: 0.7rem; font-family: 'Space Mono'; font-weight: 400; display: block; color: var(--muted); letter-spacing: 0.1em; margin-top: 2px; }
+
+    /* Progress bar */
+    .result-bars { display: flex; flex-direction: column; gap: 12px; }
+    .bar-row { display: flex; align-items: center; gap: 14px; }
+    .bar-name { font-size: 0.72rem; color: var(--muted); width: 80px; flex-shrink: 0; }
+    .bar-track {
+      flex: 1; height: 8px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%; border-radius: 999px;
+      width: 0%;
+      transition: width 1.2s cubic-bezier(0.16,1,0.3,1);
+    }
+    .bar-fill.real-bar { background: linear-gradient(90deg, #00c87a, var(--real)); box-shadow: 0 0 8px rgba(0,229,160,0.4); }
+    .bar-fill.fake-bar { background: linear-gradient(90deg, #c0154a, var(--fake)); box-shadow: 0 0 8px rgba(255,60,110,0.4); }
+    .bar-val { font-size: 0.72rem; color: var(--text); width: 44px; text-align: right; flex-shrink: 0; }
+
+    /* Result metadata */
+    .result-meta {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 12px; margin-top: 20px;
+    }
+    .meta-item {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .meta-key { font-size: 0.62rem; color: var(--muted); letter-spacing: 0.1em; margin-bottom: 4px; }
+    .meta-val { font-size: 0.82rem; font-family: 'Syne', sans-serif; font-weight: 600; }
+
+    /* ── INFO SECTION ── */
+    .info-section {
+      padding: 80px 0 60px;
+      opacity: 0;
+      animation: fadeUp 0.7s ease 0.7s forwards;
+    }
+    .section-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.8rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 40px;
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .info-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+      transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    .info-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: var(--accent);
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.3s;
+    }
+    .info-card:hover::before { transform: scaleX(1); }
+    .info-card:hover {
+      border-color: rgba(0,229,255,0.15);
+      transform: translateY(-3px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.3);
+    }
+    .card-num {
+      font-family: 'Syne', sans-serif;
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: rgba(0,229,255,0.12);
+      line-height: 1;
+      margin-bottom: 14px;
+    }
+    .card-icon { font-size: 1.6rem; margin-bottom: 12px; }
+    .card-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 8px;
+    }
+    .card-desc { font-size: 0.78rem; color: var(--muted); line-height: 1.7; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 24px;
+      position: relative; z-index: 1;
+    }
+    .footer-inner {
+      max-width: 960px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+    }
+    .footer-brand {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .footer-brand span { color: var(--accent); }
+    .footer-note { font-size: 0.7rem; color: var(--muted); }
+    .footer-model {
+      font-size: 0.68rem;
+      color: var(--accent);
+      border: 1px solid rgba(0,229,255,0.15);
+      background: rgba(0,229,255,0.04);
+      padding: 4px 12px;
+      border-radius: 999px;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed;
+      bottom: 32px; right: 32px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 20px;
+      font-size: 0.8rem;
+      z-index: 9999;
+      transform: translateY(20px);
+      opacity: 0;
+      transition: all 0.3s;
+      max-width: 280px;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.error { border-color: rgba(255,60,110,0.3); color: var(--fake); }
+    .toast.success { border-color: rgba(0,229,160,0.3); color: var(--real); }
+
+    /* Spinner */
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid rgba(8,12,18,0.3);
+      border-top-color: #080c12;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block; vertical-align: middle; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* entrance animation for result */
+    .result-card { animation: resultIn 0.5s cubic-bezier(0.16,1,0.3,1) both; }
+    @keyframes resultIn {
+      from { opacity: 0; transform: translateY(16px) scale(0.98); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 48px 0 32px; }
+      .hero-stats { gap: 24px; }
+      .drop-zone { margin: 16px; padding: 40px 16px; }
+      .preview-section, .result-panel { margin: 0 16px 24px; }
+      .result-meta { grid-template-columns: 1fr 1fr; }
+      .result-top { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="cursor" id="cursor"></div>
+  <div class="cursor-ring" id="cursorRing"></div>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-inner">
+      <div class="logo">
+        <div class="logo-icon"></div>
+        Deep<span>Scan</span>
+      </div>
+      <span class="nav-badge">ViT MODEL</span>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <div class="container">
+    <section class="hero">
+      <p class="hero-eyebrow">AI-Powered Detection System</p>
+      <h1 class="hero-title">
+        Is it Real or
+        <span class="line2">Deepfake?</span>
+      </h1>
+      <p class="hero-sub">
+        Upload any face image and our Vision Transformer model will analyze it in seconds — trained on thousands of real and AI-generated faces.
+      </p>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-num">ViT</span>
+          <span class="stat-label">Architecture</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">2</span>
+          <span class="stat-label">Classes</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">Fast</span>
+          <span class="stat-label">Inference</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCANNER CARD -->
+    <div class="scanner-wrap">
+      <div class="scanner-card">
+
+        <!-- Drop zone -->
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="fileInput" accept="image/*" />
+          <div class="dz-icon">
+            <span>🔍</span>
+            <div class="dz-corner tl"></div>
+            <div class="dz-corner tr"></div>
+            <div class="dz-corner bl"></div>
+            <div class="dz-corner br"></div>
+          </div>
+          <p class="dz-title">Drop image to scan</p>
+          <p class="dz-sub">Drag & drop a face image here,<br/>or click to browse your files</p>
+          <div class="dz-formats">
+            <span class="dz-fmt">JPG</span>
+            <span class="dz-fmt">PNG</span>
+            <span class="dz-fmt">WEBP</span>
+            <span class="dz-fmt">GIF</span>
+          </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="preview-section" id="previewSection">
+          <div class="preview-header">
+            <span class="preview-label">Selected Image</span>
+            <button class="btn-reset" id="btnReset">✕ Reset</button>
+          </div>
+          <div class="preview-frame" id="previewFrame">
+            <img id="previewImg" src="" alt="Preview" />
+            <div class="scan-overlay" id="scanOverlay">
+              <div class="scan-bar"></div>
+              <p class="scan-text">ANALYZING...</p>
+            </div>
+          </div>
+          <button class="btn-analyze" id="btnAnalyze">
+            Run Analysis
+          </button>
+        </div>
+
+        <!-- Result -->
+        <div class="result-panel" id="resultPanel">
+          <div class="result-card" id="resultCard">
+            <div class="result-top">
+              <div class="result-verdict">
+                <div class="verdict-icon" id="verdictIcon"></div>
+                <div>
+                  <div class="verdict-label">DETECTION RESULT</div>
+                  <div class="verdict-text" id="verdictText">—</div>
+                </div>
+              </div>
+              <div class="confidence-badge" id="confidenceBadge">
+                —%<span>Confidence</span>
+              </div>
+            </div>
+
+            <div class="result-bars">
+              <div class="bar-row">
+                <span class="bar-name">REAL</span>
+                <div class="bar-track"><div class="bar-fill real-bar" id="realBar"></div></div>
+                <span class="bar-val" id="realVal">—</span>
+              </div>
+              <div class="bar-row">
+                <span class="bar-name">FAKE</span>
+                <div class="bar-track"><div class="bar-fill fake-bar" id="fakeBar"></div></div>
+                <span class="bar-val" id="fakeVal">—</span>
+              </div>
+            </div>
+
+            <div class="result-meta">
+              <div class="meta-item">
+                <div class="meta-key">MODEL</div>
+                <div class="meta-val">ViT-Base</div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-key">PATCH SIZE</div>
+                <div class="meta-val">16×16</div>
+              </div>
+              <div class="meta-item">
+                <div class="meta-key">STATUS</div>
+                <div class="meta-val" id="statusVal">Complete</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- INFO -->
+    <section class="info-section">
+      <p class="section-label">How it works</p>
+      <h2 class="section-title">Powered by Vision Transformers</h2>
+      <div class="cards-grid">
+        <div class="info-card">
+          <div class="card-num">01</div>
+          <div class="card-title">Upload Face Image</div>
+          <p class="card-desc">Drop any portrait or face image into the scanner. Supports JPG, PNG, and WebP formats up to any size.</p>
+        </div>
+        <div class="info-card">
+          <div class="card-num">02</div>
+          <div class="card-title">ViT Analysis</div>
+          <p class="card-desc">The Vision Transformer splits the image into 16×16 patches and analyzes spatial attention patterns to detect manipulation artifacts.</p>
+        </div>
+        <div class="info-card">
+          <div class="card-num">03</div>
+          <div class="card-title">Confidence Score</div>
+          <p class="card-desc">Get an instant verdict — Real or Deepfake — with a confidence percentage and probability distribution for both classes.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-brand">Deep<span>Scan</span></div>
+      <div class="footer-note">For research & educational use only</div>
+      <div class="footer-model">sandeshsuman/deepfake_vs_real_image_detection</div>
+    </div>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ── Cursor ──
+    const cursor = document.getElementById('cursor');
+    const ring = document.getElementById('cursorRing');
+    let mx = 0, my = 0, rx = 0, ry = 0;
+    document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+    (function animCursor() {
+      cursor.style.left = mx + 'px'; cursor.style.top = my + 'px';
+      rx += (mx - rx) * 0.14; ry += (my - ry) * 0.14;
+      ring.style.left = rx + 'px'; ring.style.top = ry + 'px';
+      requestAnimationFrame(animCursor);
+    })();
+    document.querySelectorAll('button, .drop-zone, .info-card').forEach(el => {
+      el.addEventListener('mouseenter', () => { ring.style.width='56px'; ring.style.height='56px'; ring.style.opacity='0.3'; });
+      el.addEventListener('mouseleave', () => { ring.style.width='36px'; ring.style.height='36px'; ring.style.opacity='0.5'; });
+    });
+
+    // ── Toast ──
+    function showToast(msg, type='info') {
+      const t = document.getElementById('toast');
+      t.className = 'toast ' + type;
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3500);
+    }
+
+    // ── File handling ──
+    const dropZone   = document.getElementById('dropZone');
+    const fileInput  = document.getElementById('fileInput');
+    const previewSec = document.getElementById('previewSection');
+    const previewImg = document.getElementById('previewImg');
+    const resultPanel= document.getElementById('resultPanel');
+    const btnAnalyze = document.getElementById('btnAnalyze');
+    const btnReset   = document.getElementById('btnReset');
+    const scanOverlay= document.getElementById('scanOverlay');
+
+    let selectedFile = null;
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', e => loadFile(e.target.files[0]));
+
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+    });
+
+    function loadFile(file) {
+      if (!file || !file.type.startsWith('image/')) {
+        showToast('Please upload a valid image file.', 'error'); return;
+      }
+      selectedFile = file;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        previewImg.src = ev.target.result;
+        dropZone.style.display = 'none';
+        previewSec.classList.add('visible');
+        resultPanel.classList.remove('visible');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    btnReset.addEventListener('click', () => {
+      selectedFile = null;
+      fileInput.value = '';
+      previewImg.src = '';
+      dropZone.style.display = '';
+      previewSec.classList.remove('visible');
+      resultPanel.classList.remove('visible');
+      scanOverlay.classList.remove('active');
+      btnAnalyze.disabled = false;
+      btnAnalyze.innerHTML = 'Run Analysis';
+    });
+
+    // ── Analyze ──
+    btnAnalyze.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      btnAnalyze.disabled = true;
+      btnAnalyze.innerHTML = '<span class="spinner"></span> Analyzing...';
+      scanOverlay.classList.add('active');
+      resultPanel.classList.remove('visible');
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      try {
+        const response = await fetch('/predict', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) throw new Error('Server error: ' + response.status);
+
+        const data = await response.json();
+        showResult(data);
+
+      } catch (err) {
+        // Demo fallback: simulate result when not connected to backend
+        console.warn('Backend not available, showing demo result:', err.message);
+        const demoData = simulatePrediction();
+        showResult(demoData);
+        showToast('Demo mode: connect to Flask backend for real results', 'error');
+      } finally {
+        scanOverlay.classList.remove('active');
+        btnAnalyze.disabled = false;
+        btnAnalyze.innerHTML = 'Run Analysis';
+      }
+    });
+
+    function simulatePrediction() {
+      const isReal = Math.random() > 0.5;
+      const conf = (0.72 + Math.random() * 0.27).toFixed(4);
+      const confOther = (1 - parseFloat(conf)).toFixed(4);
+      return {
+        label: isReal ? 'Real' : 'Fake',
+        confidence: parseFloat(conf),
+        scores: {
+          Real: isReal ? parseFloat(conf) : parseFloat(confOther),
+          Fake: isReal ? parseFloat(confOther) : parseFloat(conf)
+        }
+      };
+    }
+
+    function showResult(data) {
+      const label = (data.label || '').toLowerCase().includes('real') ? 'real' : 'fake';
+      const conf  = data.confidence ?? (label === 'real' ? data.scores?.Real : data.scores?.Fake) ?? 0;
+      const realScore = data.scores?.Real ?? (label === 'real' ? conf : 1 - conf);
+      const fakeScore = data.scores?.Fake ?? (label === 'fake' ? conf : 1 - conf);
+
+      const card        = document.getElementById('resultCard');
+      const verdictIcon = document.getElementById('verdictIcon');
+      const verdictText = document.getElementById('verdictText');
+      const confBadge   = document.getElementById('confidenceBadge');
+      const realBar     = document.getElementById('realBar');
+      const fakeBar     = document.getElementById('fakeBar');
+      const realVal     = document.getElementById('realVal');
+      const fakeVal     = document.getElementById('fakeVal');
+
+      card.className = 'result-card ' + label;
+      verdictIcon.textContent = label === 'real' ? '✅' : '⚠️';
+      verdictText.textContent = label === 'real' ? 'AUTHENTIC' : 'DEEPFAKE';
+      confBadge.innerHTML = `${(conf * 100).toFixed(1)}%<span>Confidence</span>`;
+      realVal.textContent = (realScore * 100).toFixed(1) + '%';
+      fakeVal.textContent = (fakeScore * 100).toFixed(1) + '%';
+
+      // Animate bars after a tick
+      realBar.style.width = '0%';
+      fakeBar.style.width = '0%';
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        realBar.style.width = (realScore * 100) + '%';
+        fakeBar.style.width = (fakeScore * 100) + '%';
+      }));
+
+      resultPanel.classList.add('visible');
+    }
+  </script>
+</body>
+</html>
